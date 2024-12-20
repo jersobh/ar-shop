@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Me Troca!</title>
+  <script src="https://aframe.io/releases/1.2.0/aframe.min.js"></script>
+  <!-- AR.js -->
+  <script src="https://cdn.jsdelivr.net/gh/AR-js-org/AR.js@3.3.2/aframe/build/aframe-ar.min.js"></script>
+  <!-- TensorFlow.js -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.20.0/dist/tf.min.js"></script>
+  <!-- COCO-SSD model -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+  <style>
+    body { margin: 0; overflow: hidden; font-family: sans-serif; }
+
+    #product-card {
+      position: absolute;
+      bottom: 20px;
+      left: 20px;
+      background: #fff;
+      border-radius: 10px;
+      padding: 10px;
+      width: 200px;
+      display: none;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+      font-family: sans-serif;
+      z-index: 9998;
+    }
+    #product-card img {
+      width: 100%;
+      height: auto;
+      border-radius: 10px;
+    }
+    #product-card h3 {
+      margin: 10px 0 5px;
+      font-size: 16px;
+    }
+    #product-card p {
+      margin: 5px 0;
+      font-size: 14px;
+    }
+    #product-card a {
+      display: inline-block;
+      margin-top: 10px;
+      background: #007BFF;
+      color: #fff;
+      padding: 8px 10px;
+      border-radius: 5px;
+      text-decoration: none;
+      font-size: 14px;
+      text-align: center;
+    }
+    #disclaimer {
+      font-weight: bold;
+    }
+
+    /* When on a phone in portrait mode, make the card a bottom sheet */
+    @media (orientation: portrait) and (max-width: 600px) {
+      #product-card {
+        bottom: 0;
+        left: 0;
+        width: 100%;
+        height: 30vh;
+        border-radius: 10px 10px 0 0;
+        padding: 10px;
+        display: flex;
+        flex-direction: column;
+        overflow-y: auto;
+        display: none;
+      }
+
+      #product-card img {
+        width: auto;
+        max-height: 40%;
+        margin: 0 auto;
+      }
+
+      #product-card h3 {
+        font-size: 1em;
+      }
+
+      #product-card p, 
+      #product-card a {
+        font-size: 0.9em;
+      }
+    }
+
+    a-scene {
+      position: fixed;
+      top: 0; left: 0; 
+      width: 100%; height: 100%;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- AR Scene -->
+  <a-scene embedded arjs='sourceType: webcam;'>
+    <a-entity camera></a-entity>
+  </a-scene>
+
+  <!-- Product Card Overlay -->
+  <div id="product-card">
+    <img id="product-image" src="" alt="Product">
+    <h3 id="product-title"></h3>
+    <p id="product-price"></p>
+    <p id="disclaimer">Ofertas sujeitas a disponibilidade de estoque</p>
+    <a id="product-link" href="#" target="_blank">Comprar</a>
+  </div>
+
+  <script>
+    // let's set a list of products :) 
+    const PRODUCTS = {
+      "tv": {
+        image: "https://m.media-amazon.com/images/I/51O+lnoMUUL._AC_SX679_.jpg",
+        title: "Samsung Smart TV 50\" Crystal UHD 4K 50DU8000 - Painel Dynamic Crystal Color, Gaming Hub",
+        price: "R$2.499,90",
+        link: "https://amzn.to/3BqKfy4"
+      },
+      "laptop": {
+        image: "https://m.media-amazon.com/images/I/51Wv-tEUn6L.__AC_SX300_SY300_QL70_ML2_.jpg",
+        title: "Notebook Acer Nitro V15 ANV15-51-58AZ",
+        price: "R$4.781,22",
+        link: "https://amzn.to/3BBwFrC"
+      },
+      "cell phone": {
+        image: "https://m.media-amazon.com/images/I/41+jLq6yJKL._AC_SX679_.jpg",
+        title: "Apple iPhone 15 (128 GB) — Azul",
+        price: "R$4.599,00",
+        link: "https://amzn.to/3ZIWrlL"
+      },
+      "refrigerator": {
+        image: "https://m.media-amazon.com/images/I/51+Anz6q5wL._AC_SX679_.jpg",
+        title: "Samsung Geladeira Duplex Evolution SmartThings RT38 391L Bivolt Black Inox",
+        price: "R$3.799,00",
+        link: "https://amzn.to/41KAi97"
+      },
+      "chair": {
+        image: "https://m.media-amazon.com/images/I/613NfdEWPyL._AC_SX679_.jpg",
+        title: "Cadeira Ergonomica Gamer Com Apoio Para Os Pés Branco",
+        price: "R$667,00",
+        link: "https://amzn.to/3VJ9YbB"
+      },
+      "keyboard": {
+        image: "https://m.media-amazon.com/images/I/618cC2HocjL._AC_SX679_.jpg",
+        title: "Teclado Mecânico Gamer Redragon Dark Avenger K568-2 Rgb Switch Brown Com Fio",
+        price: "R$238,00",
+        link: "https://amzn.to/401Q2Dn"
+      },
+      "couch": {
+        image: "https://m.media-amazon.com/images/I/41sIYhKdImL._AC_.jpg",
+        title: "Sofá-Cama 3 Lugares Casal Premium Suede Cinza",
+        price: "R$929,68",
+        link: "https://amzn.to/4j06z2v"
+      }
+    };
+
+    let model, video;
+    let isModelReady = false;
+    let currentDetectedObject = null;
+    let detectionInterval = null;
+
+    async function setupCamera() {
+      video = document.createElement('video');
+      video.setAttribute('autoplay', '');
+      video.setAttribute('playsinline', '');
+      video.style.display = 'none';
+      document.body.appendChild(video);
+
+      const stream = await navigator.mediaDevices.getUserMedia({video: {facingMode: 'environment'}, audio:false});
+      video.srcObject = stream;
+
+      return new Promise((resolve) => {
+        video.onloadedmetadata = () => {
+          video.play();
+          resolve(video);
+        };
+      });
+    }
+
+    async function loadModel() {
+      model = await cocoSsd.load();
+      isModelReady = true;
+      console.log("Model loaded.");
+    }
+
+    function showProductCard(objectName) {
+      const product = PRODUCTS[objectName];
+      if (!product) return;
+
+      document.getElementById('product-image').src = product.image;
+      document.getElementById('product-title').innerText = product.title;
+      document.getElementById('product-price').innerText = product.price;
+      document.getElementById('product-link').href = product.link;
+      document.getElementById('product-card').style.display = 'block';
+    }
+
+    function hideProductCard() {
+      document.getElementById('product-card').style.display = 'none';
+    }
+
+    async function detectObjects() {
+        if (!isModelReady || video.readyState !== 4) return;
+      
+        const predictions = await model.detect(video);
+        console.log(predictions); // Debugging predictions
+      
+        let foundObject = null;
+        for (let p of predictions) {
+          // Check if the predicted class is one of our product keys and above a confidence threshold
+          if (p.score > 0.6 && PRODUCTS[p.class]) {
+            foundObject = p.class;
+            break; // stop at the first recognized product
+          }
+        }
+      
+        if (foundObject) {
+          console.log("Detected:", foundObject);
+          if (currentDetectedObject !== foundObject) {
+            currentDetectedObject = foundObject;
+            showProductCard(currentDetectedObject);
+          }
+        } else {
+          currentDetectedObject = null;
+          hideProductCard();
+        }
+      }
+      
+
+    (async function main() {
+      await setupCamera();
+      await loadModel();
+      detectionInterval = setInterval(detectObjects, 500);
+    })();
+  </script>
+</body>
+</html>
